@@ -6,8 +6,8 @@ import numpy as np
 import torch
 import librosa
 from src.laion_clap.hook import CLAP_Module
-from eval_utils import compute_retrieval_metric
-from eval_dataset import AudioCapsProcessor, Clothov2Processor
+from retrieval_eval_utils import compute_retrieval_metric
+from retrieval_eval_dataset import AudioCapsProcessor, Clothov2Processor
 
 import argparse
 parser = argparse.ArgumentParser()

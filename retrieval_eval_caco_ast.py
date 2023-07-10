@@ -9,7 +9,7 @@ import csv
 from tqdm import tqdm
 from src.caco.load_model import load_caco_ast
 from src.caco.dataset import Batch
-from eval_utils import compute_retrieval_metric
+from retrieval_eval_utils import compute_retrieval_metric
 import argparse
 
 parser = argparse.ArgumentParser()

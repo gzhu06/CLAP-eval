@@ -1,11 +1,10 @@
 import numpy as np
 import tensorflow as tf
-import tensorflow_io as tfio
 from flax import struct
 tf.config.set_visible_devices([], device_type='GPU')
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from typing import Callable, Generator, Iterable, List, Mapping, Optional, Tuple
+from typing import List, Mapping
 from einops import rearrange
 import jax
 import random
@@ -39,14 +38,10 @@ class AudioMAEDatasetConfig:
 
     spec_hop_length: int = 160
     spec_window_length: int = 400
+    spec_fft_size: int = 512
     spec_num_mels: int = 128
     spec_scale: float = 0.2
     spec_bias: float = 0.9
-
-@struct.dataclass
-class DatasetState:
-    sample_ind: int
-    epoch: int
 
 @struct.dataclass
 class Batch:
@@ -58,39 +53,6 @@ class Batch:
     text_input_ids: np.ndarray
     text_mask: np.ndarray
 
-def get_initial_dataset_state(
-    config: DatasetConfig
-) -> DatasetState:
-    state = DatasetState(
-        sample_ind=0,
-        epoch=0
-    )
-    return state
-
-def _get_mel_spectrogram(
-    audio_tensor: tf.Tensor,
-    hop_size: int,
-    num_mel: int,
-    max_load_audio_len: int,
-) -> tf.Tensor:
-    audio_tensor = audio_tensor[..., :max_load_audio_len] # TODO(jd)!! one minute limit for now
-    spec = tfio.audio.spectrogram(audio_tensor, nfft=1024, window=800, stride=hop_size,)
-    mel_spec = tfio.audio.melscale(spec, rate=16000, mels=num_mel, fmin=0, fmax=16000 // 2)
-    mel_spec = (tf.math.log(mel_spec + 1e-5) + 4.5) / 5
-    return mel_spec
-
-def _get_mel_spectrogram_audiomae(
-    audio: tf.Tensor,
-    hop_length: int,
-    window_length: int,
-    num_mels: int,
-    scale: float,
-    bias: float
-) -> tf.Tensor:
-    spec = tfio.audio.spectrogram(audio, nfft=512, window=window_length, stride=hop_length)
-    mel_spec = tfio.audio.melscale(spec, rate=16000, mels=num_mels, fmin=0, fmax=16000/2)
-    mel_spec = tf.math.log(mel_spec+1e-5) * scale + bias
-    return mel_spec
 
 def _dataset_process_map(
     batch: Mapping[str, tf.Tensor], 
@@ -187,135 +149,3 @@ def _tokenize_and_numpy(batch, config, tokenize_fn):
         text_input_ids=text_input_ids,
         text_mask=text_mask,
     )
-
-class Dataset:
-
-    def __init__(
-        self,
-        dataset_loaders: Iterable[DatasetLoader],
-        spec_hop_size: int,
-        spec_num_mel: int,
-        num_parallel_reads: int = 16,
-        max_load_audio_len: Optional[int] = None,
-        split_tfrecord_shards: bool = True
-    ):
-
-        self.spec_hop_size = spec_hop_size
-        self.spec_num_mel = spec_num_mel
-
-        all_data = []
-        for dataset_loader in dataset_loaders:
-            dataset = dataset_loader.get_dataset(jax.process_index(), jax.process_count(), 
-                num_parallel_reads, split_tfrecord_shards)
-            
-            if max_load_audio_len is not None:
-                def _audio_crop_map(x):
-                    x.update({'audio': x['audio'][:max_load_audio_len]})
-                    return x
-
-                dataset = dataset.map(_audio_crop_map)
-            
-            dataset = dataset.map(lambda x: dict(spectrogram=_get_mel_spectrogram(x['audio'], spec_hop_size, spec_num_mel, max_load_audio_len), **x))
-            for i, data in enumerate(dataset):
-
-                if split_tfrecord_shards or (i + jax.process_index()) % jax.process_count() == 0:
-
-                    all_data.append(data)
-
-        self.data = all_data
-
-    def get_train_dataset_generator(
-        self,
-        config: DatasetConfig,
-        tokenize_fn: Callable,
-        rng_seed: int,
-        resume_state: Optional[DatasetState] = None
-    ) -> Generator[Tuple[Batch, DatasetState], None, None]:
-
-        if resume_state is None:
-            resume_state = get_initial_dataset_state(config)
-
-        def _get_full_dataset(epoch: int, skip: int = 0) -> tf.data.Dataset:
-            d_len = len(self.data)
-            ds_seed = epoch * jax.process_count() + jax.process_index() + rng_seed
-            ds_seed_stateless = [ds_seed * 2, ds_seed * 2 + 1]
-            dataset = tf.data.Dataset.range(d_len)
-            dataset = dataset.shuffle(buffer_size=d_len, seed=ds_seed)
-            def dmap_data(i):                    
-                return self.data[i]['spectrogram'], self.data[i]['text'], self.data[i]['synthetic_text']
-            dataset = dataset.map(lambda x: tf.py_function(dmap_data, [x], [tf.float32, tf.string, tf.string]))
-            dataset = dataset.map(lambda *x: {'spectrogram': x[0], 'text': x[1], 'synthetic_text': x[2]})
-
-            dataset = tf.data.Dataset.zip((dataset, tf.data.Dataset.range(int(4e9)).map(
-                lambda x: tf.random.experimental.stateless_fold_in(ds_seed_stateless, x))))
-            dataset = dataset.map(lambda d, s: _dataset_process_map(d, s, config))
-            dataset = dataset.batch(config.batch_size, drop_remainder=True)
-            dataset = dataset.prefetch(2)
-            dataset = dataset.skip(skip)
-            return dataset
-
-        epoch = resume_state.epoch
-        sample_ind = resume_state.sample_ind
-
-        while True:
-            dataset = iter(_get_full_dataset(epoch, skip=sample_ind))
-            while True:
-                try:
-                    data = next(dataset)
-                    batch = _tokenize_and_numpy(data, config, tokenize_fn=tokenize_fn)
-                    sample_ind += 1
-                    yield batch, DatasetState(
-                        sample_ind=sample_ind,
-                        epoch=epoch
-                    )
-                except StopIteration:
-                    break
-
-            sample_ind = 0
-            epoch += 1
-
-
-    def get_eval_dataset_generator(
-        self,
-        config: DatasetConfig,
-        tokenize_fn: Callable,
-        rng_seed: int,
-        shuffle: bool = False
-    ) -> Generator[Tuple[Batch, DatasetState], None, None]:
-
-        def _get_full_dataset(epoch: int, skip: int = 0) -> tf.data.Dataset:
-            filler_element = {
-                'data_mask': [[False]], 
-                'spectrogram': tf.zeros((1, 256, self.spec_num_mel)), # TODO(jd)
-                'text': tf.convert_to_tensor([['']]), 
-                'synthetic_text': tf.convert_to_tensor([['']])
-            }
-            filler_dataset = tf.data.Dataset.from_tensor_slices(filler_element)
-            d_len = len(self.data)
-            ds_seed = epoch * jax.process_count() + jax.process_index() + rng_seed
-            ds_seed_stateless = [ds_seed * 2, ds_seed * 2 + 1]
-            dataset = tf.data.Dataset.range(d_len)
-            if shuffle:
-                dataset = dataset.shuffle(buffer_size=d_len, seed=ds_seed)
-            def dmap_data(i):                    
-                return self.data[i]['spectrogram'], self.data[i]['text'], self.data[i]['synthetic_text']
-            dataset = dataset.map(lambda x: tf.py_function(dmap_data, [x], [tf.float32, tf.string, tf.string]))
-            dataset = dataset.map(lambda *x: {'spectrogram': x[0], 'text': x[1], 'synthetic_text': x[2]})
-            dataset = dataset.map(
-                lambda features: dict(data_mask=[True], **features))
-            dataset = dataset.concatenate(filler_dataset.repeat(None))
-
-            dataset = tf.data.Dataset.zip((dataset, tf.data.Dataset.range(int(4e9)).map(
-                lambda x: tf.random.experimental.stateless_fold_in(ds_seed_stateless, x))))
-            dataset = dataset.map(lambda d, s: _dataset_process_map(d, s, config))
-            dataset = dataset.batch(config.batch_size, drop_remainder=True)
-            dataset = dataset.prefetch(2)
-            dataset = dataset.skip(skip)
-            return dataset
-
-        dataset = iter(_get_full_dataset(0, 0))
-
-        while True:
-            data = next(dataset)
-            batch = _tokenize_and_numpy(data, config, tokenize_fn=tokenize_fn)
-            yield batch, data['data_mask']._numpy()[:, 0]

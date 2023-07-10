@@ -3,14 +3,13 @@ import flax
 import jax.numpy as jnp
 from src.caco.dataset import DatasetConfig, _dataset_process_map, _tokenize_and_numpy
 from src.caco.caco_eval_utils import load_from_list
-from eval_dataset import VGGSoundProcessor, AudioCapsProcessor, Clothov2Processor
+from retrieval_eval_dataset import VGGSoundProcessor, AudioCapsProcessor, Clothov2Processor
 import tensorflow as tf
 from einops import rearrange
 import csv
 from tqdm import tqdm
-from src.caco.load_model import load_caco
 from src.caco.dataset import Batch
-from eval_utils import compute_retrieval_metric
+from retrieval_eval_utils import compute_retrieval_metric
 import argparse
 
 parser = argparse.ArgumentParser()
@@ -20,7 +19,15 @@ args = parser.parse_args()
 
 # load blap globally for test
 ckpt_path = args.ckpt_path
-caco_model_dict = load_caco(ckpt_path, True)
+
+if 'ast' in args.ckpt_path:
+    from src.caco.load_model import load_caco_ast
+    caco_model_dict = load_caco_ast(ckpt_path, use_decoder=True)
+else:
+    from src.caco.load_model import load_caco
+    caco_model_dict = load_caco(ckpt_path, use_decoder=True)
+
+
 caco_params = flax.jax_utils.replicate(caco_model_dict['caco_params'], devices=jax.local_devices())
 caco_model = caco_model_dict['caco_model']
 tokenizer = caco_model_dict['tokenizer']
@@ -207,11 +214,11 @@ if __name__ == "__main__":
         total_samples = 16000 * audio_seg_time
         max_patches = (160000 // 160 // 16) * 8
         CommondataConfig = DatasetConfig(batch_size=1,
-                                            patches_seq_len=max_patches,
-                                            time_patch_size=16,
-                                            freq_patch_size=16,
-                                            max_text_len=100,
-                                            synthetic_prob=0.8)
+                                         patches_seq_len=max_patches,
+                                         time_patch_size=16,
+                                         freq_patch_size=16,
+                                         max_text_len=100,
+                                         synthetic_prob=0.8)
 
         ## dataset config definition
         vggsounddataprocessor = VGGSoundProcessor()

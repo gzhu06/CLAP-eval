@@ -1,13 +1,10 @@
-import numpy as np
 import jax
 import jax.numpy as jnp
-import flax
 import flax.linen as nn
 from flax import struct
 # from train import LossConfig
-from einops import rearrange, reduce, repeat
-from typing import Callable, Optional, Mapping, Tuple, Union
-from functools import partial
+from einops import rearrange, repeat
+from typing import Optional, Mapping, Tuple, Union
 
 PyTreeDef = type(jax.tree_util.tree_structure(None))
 

@@ -5,8 +5,8 @@ import json, os, csv, glob
 import pandas as pd
 from dataclasses import dataclass
 
-# AUDIOTEXT_DATA_PATH = '/storageHDD/ge/audio_sfx_wav/'
-AUDIOTEXT_DATA_PATH = '/storageHDD/ge/audio_sfx_raw/'
+AUDIOTEXT_DATA_PATH = '/storageHDD/ge/audio_sfx_wav/'
+# AUDIOTEXT_DATA_PATH = '/storageHDD/ge/audio_sfx_raw/'
 
 @dataclass
 class VGGSoundConfig:

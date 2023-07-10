@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 from flax.training import checkpoints
-from .text_models.roberta_text_model import RobertaConfig, RobertaModel, RobertaMatch, RobertaDecoder
+from .text_models.roberta_text_model import RobertaConfig, RobertaModel, RobertaDecoder
 from transformers import RobertaTokenizerFast
 
 def load_caco(ckpt_path, use_decoder=True):
@@ -89,7 +89,7 @@ def load_audiomae(ckpt_path):
     
     return audiomae_model_dict
 
-def load_caco_ast(ckpt_path):
+def load_caco_ast(ckpt_path, use_decoder=True):
     from .caco_ast import CACO, CACOConfig, LossConfig
     from .audio_models.ast_model import ASTConfig, ASTModel
     
@@ -127,7 +127,7 @@ def load_caco_ast(ckpt_path):
     caco_config = CACOConfig(
         dtype=jnp.float32,
         logit_scale_init_value=2.,
-        use_decoder=True,
+        use_decoder=use_decoder,
         projection_size=768
         )
 
