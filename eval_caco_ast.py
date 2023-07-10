@@ -2,25 +2,24 @@ import jax
 import flax
 import jax.numpy as jnp
 from src.caco.dataset import DatasetConfig, _dataset_process_map, _tokenize_and_numpy
-from src.caco.caco_eval_utils import load_from_list
-from eval_dataset import VGGSoundProcessor, AudioCapsProcessor, Clothov2Processor
+from caco.caco_eval_utils import load_from_list, VGGSoundProcessor, AudioCapsProcessor, Clothov2Processor, WavText5KProcessor
 import tensorflow as tf
 from einops import rearrange
 import csv
 from tqdm import tqdm
-from src.caco.load_model import load_caco
+from src.caco.load_model import load_caco_ast
 from src.caco.dataset import Batch
 from eval_utils import compute_retrieval_metric
 import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--ckpt_path', type=str, default='./ckpt.pt', help='model ckpt path')
-parser.add_argument('--task', type=str, default='zs', help='evaluation task name')
+parser.add_argument('--task', type=str, default='ar', help='evaluation task name')
 args = parser.parse_args()
 
 # load blap globally for test
 ckpt_path = args.ckpt_path
-caco_model_dict = load_caco(ckpt_path, True)
+caco_model_dict = load_caco_ast(ckpt_path, True)
 caco_params = flax.jax_utils.replicate(caco_model_dict['caco_params'], devices=jax.local_devices())
 caco_model = caco_model_dict['caco_model']
 tokenizer = caco_model_dict['tokenizer']
@@ -106,11 +105,7 @@ def zs_classification(dataprocessor, datasetconfig, all_text_embeddings):
     ks = [1, 5, 10]
     total_correct = {str(k): 0 for k in ks}
     for file_idx in tqdm(range(dataset_len)):
-
-        audio_name = filepaths[file_idx].split('/')[-1].split('.wav')[0]
-        audio_description = descriptions[audio_name]['description'][0]
-
-        data_dict = load_from_list(filepaths[file_idx], audio_description)
+        data_dict = load_from_list(file_idx, filepaths, descriptions, computer_captions)
         d_ = _dataset_process_map(data_dict, [0, 1], datasetconfig)
         d = {}
         for d_item in d_:
@@ -192,6 +187,7 @@ def audio_retrieval(dataprocessor, datasetconfig, eval_split='test'):
     ta_indices = jnp.argsort(-logits_ar, axis=-1)
     compute_retrieval_metric(ta_indices, all_text, all_audio, gt_text_audio, 'ta')
 
+
         
 if __name__ == "__main__":
     
@@ -221,6 +217,7 @@ if __name__ == "__main__":
             vgg_classes = [line[0] for line in list(csv.reader(file))]
 
         class_to_index_map = {v: i for i, v in enumerate(vgg_classes)}
+        class_to_index_map[''] = len(vgg_classes) + 1
 
         all_text_embeddings = compute_all_class_embedding(vgg_classes, 
                                                           CommondataConfig.max_text_len, 
@@ -247,6 +244,10 @@ if __name__ == "__main__":
                                          freq_patch_size=16,
                                          max_text_len=100,
                                          synthetic_prob=0.8)
+        
+        # wavtext5kprocessor = WavText5KProcessor()
+        # audio_retrieval(wavtext5kprocessor, CommondataConfig)
+        # exit()
 
         clothov2processor = Clothov2Processor()
         audio_retrieval(clothov2processor, CommondataConfig, 'evaluation')
