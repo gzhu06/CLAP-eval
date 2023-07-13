@@ -1,17 +1,13 @@
-import numpy as np
-
 import jax
 import jax.numpy as jnp
-
-import flax
 import flax.linen as nn
 from flax import struct
 
-from typing import Any, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import os
 
-from einops import rearrange, reduce, repeat
+from einops import rearrange, repeat
 
 PyTreeDef = type(jax.tree_util.tree_structure(None))
 
@@ -194,8 +190,6 @@ class EncoderLayer(nn.Module):
             return x, None
 
         return x
-
-
 
 
 class ASTModel(nn.Module):

@@ -2,7 +2,8 @@ import jax
 import flax
 import jax.numpy as jnp
 from src.caco.dataset import DatasetConfig, _dataset_process_map, _tokenize_and_numpy
-from caco.caco_eval_utils import load_from_list, VGGSoundProcessor, AudioCapsProcessor, Clothov2Processor, WavText5KProcessor
+from src.caco.caco_eval_utils import load_from_list
+from retrieval_eval_dataset import VGGSoundProcessor, AudioCapsProcessor, Clothov2Processor
 import tensorflow as tf
 from einops import rearrange
 import csv
@@ -52,7 +53,7 @@ def compute_text_embedding(text_batch, model_params):
         {'params': model_params},
         text_input_ids=text_batch['text_input_ids'], 
         text_mask=text_batch['text_mask'],
-        deterministic=True,
+        is_train=False,
         return_hidden_state=False,
         normalize=True,
         method=caco_model.get_text_embedding,
@@ -65,7 +66,7 @@ def compute_audio_embedding(audio_batch, model_params):
         audio_time_inds=audio_batch['audio_time_inds'],
         audio_freq_inds=audio_batch['audio_freq_inds'],
         audio_mask=audio_batch['audio_mask'],
-        deterministic=True,
+        is_train=False,
         return_hidden_state=False,
         normalize=True,
         method=caco_model.get_audio_embedding,
@@ -105,7 +106,11 @@ def zs_classification(dataprocessor, datasetconfig, all_text_embeddings):
     ks = [1, 5, 10]
     total_correct = {str(k): 0 for k in ks}
     for file_idx in tqdm(range(dataset_len)):
-        data_dict = load_from_list(file_idx, filepaths, descriptions, computer_captions)
+
+        audio_name = filepaths[file_idx].split('/')[-1].split('.wav')[0]
+        audio_description = descriptions[audio_name]['description'][0]
+
+        data_dict = load_from_list(filepaths[file_idx], audio_description, ast=True)
         d_ = _dataset_process_map(data_dict, [0, 1], datasetconfig)
         d = {}
         for d_item in d_:
@@ -150,7 +155,7 @@ def audio_retrieval(dataprocessor, datasetconfig, eval_split='test'):
         for audio_description in audio_descriptions:
             
             # get data info
-            data_dict = load_from_list(filepaths[file_idx], audio_description)
+            data_dict = load_from_list(filepaths[file_idx], audio_description, ast=True)
             text_str = bytes.decode(data_dict['text'][0].numpy())
             gt_audio_text[audio_name].append(text_str) 
             gt_text_audio[text_str] = audio_name
@@ -235,6 +240,18 @@ if __name__ == "__main__":
         # 3b) in audio to text: rank the top text embeddings on the given audio embedding
         #######################################
 
+        audio_seg_time = 10
+        total_samples = 16000 * audio_seg_time
+        max_patches = (total_samples // 160 // 16) * 8
+        ACdataConfig = DatasetConfig(batch_size=1,
+                                     patches_seq_len=max_patches,
+                                     time_patch_size=16,
+                                     freq_patch_size=16,
+                                     max_text_len=100,
+                                     synthetic_prob=0.8)
+        audiocapsprocessor = AudioCapsProcessor()
+        audio_retrieval(audiocapsprocessor, ACdataConfig, 'test')
+
         audio_seg_time = 30
         total_samples = 16000 * audio_seg_time
         max_patches = (total_samples // 160 // 16) * 8
@@ -252,15 +269,5 @@ if __name__ == "__main__":
         clothov2processor = Clothov2Processor()
         audio_retrieval(clothov2processor, CommondataConfig, 'evaluation')
 
-        audio_seg_time = 10
-        total_samples = 16000 * audio_seg_time
-        max_patches = (total_samples // 160 // 16) * 8
-        ACdataConfig = DatasetConfig(batch_size=1,
-                                     patches_seq_len=max_patches,
-                                     time_patch_size=16,
-                                     freq_patch_size=16,
-                                     max_text_len=100,
-                                     synthetic_prob=0.8)
-        audiocapsprocessor = AudioCapsProcessor()
-        audio_retrieval(audiocapsprocessor, ACdataConfig, 'test')
+        
         

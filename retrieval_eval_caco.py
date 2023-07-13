@@ -9,6 +9,7 @@ from einops import rearrange
 import csv
 from tqdm import tqdm
 from src.caco.dataset import Batch
+from src.caco.load_model import load_caco
 from retrieval_eval_utils import compute_retrieval_metric
 import argparse
 
@@ -19,15 +20,7 @@ args = parser.parse_args()
 
 # load blap globally for test
 ckpt_path = args.ckpt_path
-
-if 'ast' in args.ckpt_path:
-    from src.caco.load_model import load_caco_ast
-    caco_model_dict = load_caco_ast(ckpt_path, use_decoder=True)
-else:
-    from src.caco.load_model import load_caco
-    caco_model_dict = load_caco(ckpt_path, use_decoder=True)
-
-
+caco_model_dict = load_caco(ckpt_path, use_decoder=True)
 caco_params = flax.jax_utils.replicate(caco_model_dict['caco_params'], devices=jax.local_devices())
 caco_model = caco_model_dict['caco_model']
 tokenizer = caco_model_dict['tokenizer']
